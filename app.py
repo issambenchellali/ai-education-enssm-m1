@@ -1,7 +1,24 @@
 import streamlit as st
-import csv
+import pandas as pd
+from supabase import create_client, Client
 import os
+from dotenv import load_dotenv
+import openai
 from collections import Counter
+
+# ---------------------------
+# تحميل المتغيرات السرية
+# ---------------------------
+load_dotenv()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
+
+# ---------------------------
+# إنشاء عميل Supabase
+# ---------------------------
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------------------------
 # إعداد الصفحة
@@ -13,47 +30,50 @@ st.set_page_config(
 )
 
 # ---------------------------
-# دالة تسجيل الدخول
+# تسجيل الدخول
 # ---------------------------
 def authenticate(username, password):
-    with open("users.csv", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if (
-                username.strip() == row["username"].strip()
-                and password.strip() == row["password"].strip()
-            ):
-                return row["role"].strip()
+    data = supabase.table("users").select("*").eq("username", username).execute()
+    if data.data:
+        user = data.data[0]
+        if password == user["password"]:
+            return user["role"]
     return None
 
 # ---------------------------
-# تسجيل التفاعل (التعلم الذكي)
+# تسجيل النشاط
 # ---------------------------
 def log_activity(username, level, subject, lesson, activity_type):
-    with open("activity_log.csv", "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow([username, level, subject, lesson, activity_type])
+    supabase.table("activity_log").insert({
+        "username": username,
+        "level": level,
+        "subject": subject,
+        "lesson": lesson,
+        "activity_type": activity_type
+    }).execute()
 
 # ---------------------------
-# اقتراح ذكي بناءً على الاستعمال
+# اقتراح ذكي باستخدام Supabase
 # ---------------------------
 def suggest_activity(username):
-    if not os.path.exists("activity_log.csv"):
-        return None
-
-    with open("activity_log.csv", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        activities = [
-            (row["level"], row["subject"], row["lesson"])
-            for row in reader
-            if row["username"] == username
-        ]
-
+    res = supabase.table("activity_log").select("*").eq("username", username).execute()
+    activities = [(row["level"], row["subject"], row["lesson"]) for row in res.data]
     if not activities:
         return None
-
     most_common = Counter(activities).most_common(1)[0][0]
     return most_common
+
+# ---------------------------
+# اقتراح تمارين بواسطة AI
+# ---------------------------
+def generate_exercise(subject, lesson):
+    prompt = f"اصنع لي تمرين قصير للدرس '{lesson}' في مادة '{subject}' باللغة العربية."
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=300
+    )
+    return response.choices[0].message.content
 
 # ---------------------------
 # تهيئة الجلسة
@@ -67,10 +87,8 @@ if "role" not in st.session_state:
 # ---------------------------
 if not st.session_state.role:
     st.title("🔐 تسجيل الدخول")
-
     username = st.text_input("اسم المستخدم")
     password = st.text_input("كلمة المرور", type="password")
-
     if st.button("دخول"):
         role = authenticate(username, password)
         if role:
@@ -86,7 +104,6 @@ if not st.session_state.role:
 # ---------------------------
 else:
     st.sidebar.success(f"👤 {st.session_state.username} ({st.session_state.role})")
-
     if st.sidebar.button("🚪 تسجيل الخروج"):
         st.session_state.role = None
         st.session_state.username = None
@@ -96,40 +113,28 @@ else:
     # اختيار النشاط
     # ---------------------------
     st.header("📚 اختيار النشاط")
-
     level = st.selectbox("الطور", ["ابتدائي", "متوسط", "ثانوي"])
     subject = st.selectbox("المادة", ["رياضيات", "علوم", "فيزياء", "لغة عربية"])
     lesson = st.text_input("اسم الحصة")
-
-    activity_type = st.radio(
-        "نوع النشاط",
-        ["شرح", "تمارين", "تطبيق"]
-    )
+    activity_type = st.radio("نوع النشاط", ["شرح", "تمارين", "تطبيق"])
 
     if st.button("▶️ بدء النشاط"):
         st.success(f"📘 {activity_type} - {lesson}")
-        log_activity(
-            st.session_state.username,
-            level,
-            subject,
-            lesson,
-            activity_type
-        )
+        log_activity(st.session_state.username, level, subject, lesson, activity_type)
+
+        # اقتراح تمارين فعلية بواسطة AI
+        if activity_type != "شرح":
+            exercise = generate_exercise(subject, lesson)
+            st.markdown(f"### 🤖 التمرين المقترح:\n{exercise}")
 
     # ---------------------------
     # الاقتراح الذكي
     # ---------------------------
     st.divider()
     st.subheader("🤖 اقتراح ذكي")
-
     suggestion = suggest_activity(st.session_state.username)
     if suggestion:
-        st.info(
-            f"📌 نقترح عليك متابعة:\n\n"
-            f"الطور: {suggestion[0]}\n"
-            f"المادة: {suggestion[1]}\n"
-            f"الحصة: {suggestion[2]}"
-        )
+        st.info(f"📌 نقترح متابعة:\nالطور: {suggestion[0]}\nالمادة: {suggestion[1]}\nالحصة: {suggestion[2]}")
     else:
         st.warning("لا توجد بيانات كافية للاقتراح بعد.")
 
@@ -137,14 +142,24 @@ else:
     # لوحة حسب الدور
     # ---------------------------
     st.divider()
-
     if st.session_state.role == "admin":
         st.header("🧑‍💼 لوحة الإداري")
-        st.write("إدارة المستخدمين والمنصة (قابل للتوسيع)")
+        st.write("📊 إحصائيات المستخدمين والأنشطة")
+        data = supabase.table("activity_log").select("*").execute()
+        df = pd.DataFrame(data.data)
+        st.dataframe(df)
+        st.bar_chart(df.groupby("subject").size())
 
     elif st.session_state.role == "teacher":
         st.header("👨‍🏫 لوحة الأستاذ")
-        st.write("إضافة أنشطة ومتابعة التفاعل")
+        st.write("إضافة تمارين جديدة")
+        new_lesson = st.text_input("درس جديد")
+        file = st.file_uploader("رفع ملف الدرس (PDF/صورة/نص)", type=["pdf", "png", "jpg", "txt"])
+        if st.button("💾 إضافة درس"):
+            if new_lesson and file:
+                file_content = file.read()
+                supabase.storage.from_("lessons").upload(f"{new_lesson}_{file.name}", file_content)
+                st.success("✅ تم إضافة الدرس بنجاح")
 
     elif st.session_state.role == "student":
         st.header("👨‍🎓 لوحة الطالب")
