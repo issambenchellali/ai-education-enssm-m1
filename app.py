@@ -1,157 +1,151 @@
 import streamlit as st
-import pandas as pd
-import time
+import csv
+import os
+from collections import Counter
 
-# ---------------------------------
+# ---------------------------
 # إعداد الصفحة
-# ---------------------------------
+# ---------------------------
 st.set_page_config(
     page_title="منصة تعليمية ذكية",
-    page_icon="🎓",
+    page_icon="📘",
     layout="wide"
 )
 
-# ---------------------------------
-# تحميل البيانات
-# ---------------------------------
-@st.cache_data
-def load_activities():
-    return pd.read_csv("activities.csv")
+# ---------------------------
+# دالة تسجيل الدخول
+# ---------------------------
+def authenticate(username, password):
+    with open("users.csv", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if (
+                username.strip() == row["username"].strip()
+                and password.strip() == row["password"].strip()
+            ):
+                return row["role"].strip()
+    return None
 
-@st.cache_data
-def load_users():
-    return pd.read_csv("users.csv")
+# ---------------------------
+# تسجيل التفاعل (التعلم الذكي)
+# ---------------------------
+def log_activity(username, level, subject, lesson, activity_type):
+    with open("activity_log.csv", "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([username, level, subject, lesson, activity_type])
 
-activities = load_activities()
-users = load_users()
+# ---------------------------
+# اقتراح ذكي بناءً على الاستعمال
+# ---------------------------
+def suggest_activity(username):
+    if not os.path.exists("activity_log.csv"):
+        return None
 
-# ---------------------------------
-# Session State
-# ---------------------------------
-if "logged" not in st.session_state:
-    st.session_state.logged = False
-    st.session_state.role = ""
-    st.session_state.start_time = 0
+    with open("activity_log.csv", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        activities = [
+            (row["level"], row["subject"], row["lesson"])
+            for row in reader
+            if row["username"] == username
+        ]
 
-# ---------------------------------
-# تسجيل الدخول
-# ---------------------------------
-def login():
+    if not activities:
+        return None
+
+    most_common = Counter(activities).most_common(1)[0][0]
+    return most_common
+
+# ---------------------------
+# تهيئة الجلسة
+# ---------------------------
+if "role" not in st.session_state:
+    st.session_state.role = None
+    st.session_state.username = None
+
+# ---------------------------
+# صفحة تسجيل الدخول
+# ---------------------------
+if not st.session_state.role:
     st.title("🔐 تسجيل الدخول")
-    u = st.text_input("اسم المستخدم")
-    p = st.text_input("كلمة المرور", type="password")
+
+    username = st.text_input("اسم المستخدم")
+    password = st.text_input("كلمة المرور", type="password")
 
     if st.button("دخول"):
-        user = users[(users.username == u) & (users.password == p)]
-        if user.empty:
-            st.error("بيانات غير صحيحة")
-        else:
-            st.session_state.logged = True
-            st.session_state.role = user.iloc[0]["role"]
+        role = authenticate(username, password)
+        if role:
+            st.session_state.role = role
+            st.session_state.username = username
+            st.success("✅ تم تسجيل الدخول بنجاح")
             st.rerun()
+        else:
+            st.error("❌ بيانات غير صحيحة")
 
-# ---------------------------------
-# الذكاء الاصطناعي (حساب النقاط)
-# ---------------------------------
-def calculate_ai_score(row):
-    return (
-        row["avg_rating"] * 0.5
-        + row["success_count"] * 0.3
-        - row["usage_count"] * 0.2
+# ---------------------------
+# بعد تسجيل الدخول
+# ---------------------------
+else:
+    st.sidebar.success(f"👤 {st.session_state.username} ({st.session_state.role})")
+
+    if st.sidebar.button("🚪 تسجيل الخروج"):
+        st.session_state.role = None
+        st.session_state.username = None
+        st.rerun()
+
+    # ---------------------------
+    # اختيار النشاط
+    # ---------------------------
+    st.header("📚 اختيار النشاط")
+
+    level = st.selectbox("الطور", ["ابتدائي", "متوسط", "ثانوي"])
+    subject = st.selectbox("المادة", ["رياضيات", "علوم", "فيزياء", "لغة عربية"])
+    lesson = st.text_input("اسم الحصة")
+
+    activity_type = st.radio(
+        "نوع النشاط",
+        ["شرح", "تمارين", "تطبيق"]
     )
 
-# ---------------------------------
-# واجهة الطالب
-# ---------------------------------
-def student_view():
-    st.header("👨‍🎓 الطالب")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        level = st.selectbox("الطور", activities.level_stage.unique())
-    with col2:
-        subject = st.selectbox(
-            "المادة",
-            activities[activities.level_stage == level].subject.unique()
-        )
-    with col3:
-        lesson = st.selectbox(
-            "الحصة",
-            activities[
-                (activities.level_stage == level) &
-                (activities.subject == subject)
-            ].lesson.unique()
+    if st.button("▶️ بدء النشاط"):
+        st.success(f"📘 {activity_type} - {lesson}")
+        log_activity(
+            st.session_state.username,
+            level,
+            subject,
+            lesson,
+            activity_type
         )
 
-    if st.button("🤖 اقترح نشاطًا ذكيًا"):
-        subset = activities[
-            (activities.level_stage == level) &
-            (activities.subject == subject) &
-            (activities.lesson == lesson)
-        ].copy()
+    # ---------------------------
+    # الاقتراح الذكي
+    # ---------------------------
+    st.divider()
+    st.subheader("🤖 اقتراح ذكي")
 
-        subset["ai_score"] = subset.apply(calculate_ai_score, axis=1)
-        activity = subset.sort_values("ai_score", ascending=False).iloc[0]
-
-        st.session_state.start_time = time.time()
-
-        st.markdown("## 📘 الشرح")
-        st.write(activity.description)
-
-        st.markdown("## ✏️ التمارين")
-        st.write(activity.exercises)
-
-        st.markdown("## 🧪 التطبيق")
-        st.write(activity.application)
-
-        rating = st.slider("⭐ قيّم النشاط", 1, 5, 3)
-
-        if st.button("✅ أنهيت النشاط"):
-            duration = int(time.time() - st.session_state.start_time)
-
-            idx = activities.id == activity.id
-            activities.loc[idx, "usage_count"] += 1
-            activities.loc[idx, "success_count"] += 1
-            activities.loc[idx, "total_rating"] += rating
-            activities.loc[idx, "avg_rating"] = (
-                activities.loc[idx, "total_rating"]
-                / activities.loc[idx, "usage_count"]
-            )
-
-            activities.to_csv("activities.csv", index=False)
-            st.success("تم حفظ تفاعلك – النظام يتعلم منك 🤖")
-
-# ---------------------------------
-# واجهة الأستاذ
-# ---------------------------------
-def teacher_view():
-    st.header("👨‍🏫 الأستاذ")
-    st.dataframe(activities)
-
-# ---------------------------------
-# واجهة الإداري
-# ---------------------------------
-def admin_view():
-    st.header("🧑‍💼 الإداري")
-    st.metric("عدد الأنشطة", len(activities))
-    st.metric("عدد المستخدمين", len(users))
-
-# ---------------------------------
-# التطبيق الرئيسي
-# ---------------------------------
-if not st.session_state.logged:
-    login()
-else:
-    with st.sidebar:
-        st.write(f"الدور: **{st.session_state.role}**")
-        if st.button("تسجيل الخروج"):
-            st.session_state.logged = False
-            st.rerun()
-
-    if st.session_state.role == "student":
-        student_view()
-    elif st.session_state.role == "teacher":
-        teacher_view()
+    suggestion = suggest_activity(st.session_state.username)
+    if suggestion:
+        st.info(
+            f"📌 نقترح عليك متابعة:\n\n"
+            f"الطور: {suggestion[0]}\n"
+            f"المادة: {suggestion[1]}\n"
+            f"الحصة: {suggestion[2]}"
+        )
     else:
-        admin_view()
+        st.warning("لا توجد بيانات كافية للاقتراح بعد.")
+
+    # ---------------------------
+    # لوحة حسب الدور
+    # ---------------------------
+    st.divider()
+
+    if st.session_state.role == "admin":
+        st.header("🧑‍💼 لوحة الإداري")
+        st.write("إدارة المستخدمين والمنصة (قابل للتوسيع)")
+
+    elif st.session_state.role == "teacher":
+        st.header("👨‍🏫 لوحة الأستاذ")
+        st.write("إضافة أنشطة ومتابعة التفاعل")
+
+    elif st.session_state.role == "student":
+        st.header("👨‍🎓 لوحة الطالب")
+        st.write("التعلم والتفاعل مع المحتوى")
