@@ -2,463 +2,204 @@ import streamlit as st
 import os
 from dotenv import load_dotenv
 from supabase import create_client
-from openai import OpenAI
+from openai import OpenAI, AuthenticationError
 
 # ===============================
 # تحميل المتغيرات السرية
 # ===============================
 load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# الحصول على المفاتيح من المتغيرات البيئية
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # ===============================
-# التحقق من المتغيرات
+# التحقق من المتغيرات مع عرض واضح
 # ===============================
-if not all([SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY]):
-    st.error("❌ يرجى إعداد جميع المتغيرات البيئية في ملف .env")
-    st.stop()
+def check_environment():
+    """فحص المتغيرات البيئية وإعلام المستخدم"""
+    issues = []
+    
+    if not SUPABASE_URL:
+        issues.append("❌ SUPABASE_URL غير مضبوط")
+    elif "supabase.co" not in SUPABASE_URL:
+        issues.append("⚠️ SUPABASE_URL قد يكون غير صحيح")
+    
+    if not SUPABASE_KEY:
+        issues.append("❌ SUPABASE_KEY غير مضبوط")
+    
+    if not OPENAI_API_KEY:
+        issues.append("❌ OPENAI_API_KEY غير مضبوط")
+    elif not OPENAI_API_KEY.startswith("sk-"):
+        issues.append("⚠️ OpenAI API Key غير صالح (يجب أن يبدأ بـ sk-)")
+    
+    return issues
 
 # ===============================
-# إنشاء العملاء
+# إعدادات آمنة للـ OpenAI
 # ===============================
-@st.cache_resource
-def init_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
 @st.cache_resource
 def init_openai():
-    return OpenAI(api_key=OPENAI_API_KEY)
-
-supabase = init_supabase()
-ai_client = init_openai()
-
-# ===============================
-# دوال المصادقة والإدارة
-# ===============================
-def authenticate(username, password):
-    """المصادقة مع قاعدة البيانات"""
+    """تهيئة عميل OpenAI مع معالجة الأخطاء"""
+    if not OPENAI_API_KEY:
+        st.error("OpenAI API Key غير موجود")
+        return None
+    
     try:
-        res = supabase.table("users").select("*").eq("username", username).execute()
-        if res.data and res.data[0]["password"] == password:
-            return {
-                "role": res.data[0]["role"],
-                "user_id": res.data[0]["id"],
-                "username": username
-            }
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        # اختبار بسيط للتحقق من صحة المفتاح
+        test_response = client.models.list()
+        st.sidebar.success("✅ OpenAI متصل بنجاح")
+        return client
+    except AuthenticationError:
+        st.error("🔑 مفتاح OpenAI غير صالح أو منتهي الصلاحية")
+        return None
     except Exception as e:
-        st.error(f"خطأ في المصادقة: {e}")
-    return None
+        st.error(f"خطأ في الاتصال بـ OpenAI: {str(e)}")
+        return None
 
-def log_activity(user_id, activity_type, details=None):
-    """تسجيل النشاط"""
+@st.cache_resource
+def init_supabase():
+    """تهيئة عميل Supabase مع معالجة الأخطاء"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        st.error("إعدادات Supabase غير مكتملة")
+        return None
+    
     try:
-        data = {
-            "user_id": user_id,
-            "activity_type": activity_type,
-            "details": details or {}
-        }
-        supabase.table("activity_log").insert(data).execute()
+        client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        # اختبار الاتصال
+        client.table("users").select("*").limit(1).execute()
+        st.sidebar.success("✅ Supabase متصل بنجاح")
+        return client
     except Exception as e:
-        print(f"خطأ في تسجيل النشاط: {e}")
+        st.error(f"خطأ في الاتصال بـ Supabase: {str(e)}")
+        return None
 
 # ===============================
-# صفحة تسجيل الدخول
+# تهيئة العملاء
 # ===============================
-def login_page():
-    st.title("🔐 تسجيل الدخول - المنصة التعليمية الذكية")
+def initialize_clients():
+    """تهيئة كافة العملاء مع التعامل مع الأخطاء"""
+    # التحقق من البيئة أولاً
+    issues = check_environment()
     
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.image("https://cdn-icons-png.flaticon.com/512/2991/2991148.png", width=150)
-    
-    with col2:
-        username = st.text_input("اسم المستخدم")
-        password = st.text_input("كلمة المرور", type="password")
+    if issues:
+        with st.sidebar:
+            st.error("مشكلات في الإعدادات:")
+            for issue in issues:
+                st.write(issue)
         
-        if st.button("🚀 دخول", type="primary", use_container_width=True):
-            if not username or not password:
-                st.error("⚠️ يرجى إدخال اسم المستخدم وكلمة المرور")
-                return
+        # عرض إرشادات للمستخدم
+        if st.session_state.get("logged_in"):
+            st.warning("""
+            **تحذير:** هناك مشكلة في إعدادات النظام
             
-            user_data = authenticate(username, password)
-            if user_data:
-                st.session_state.update({
-                    "logged_in": True,
-                    "role": user_data["role"],
-                    "user_id": user_data["user_id"],
-                    "username": user_data["username"]
-                })
-                log_activity(user_data["user_id"], "login")
-                st.success("✅ تم تسجيل الدخول بنجاح!")
-                st.rerun()
-            else:
-                st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
+            يرجى:
+            1. التحقق من ملف `.env`
+            2. التأكد من صحة المفاتيح
+            3. إعادة تشغيل التطبيق
+            """)
+        return None, None
     
-    # قسم التسجيل (للتوضيح)
-    with st.expander("🔧 تجربة سريعة (للتطوير)"):
-        st.markdown("""
-        **للتجربة السريعة أثناء التطوير:**
-        
-        **طالب:**  
-        - اسم المستخدم: student1  
-        - كلمة المرور: 123456
-        
-        **أستاذ:**  
-        - اسم المستخدم: teacher1  
-        - كلمة المرور: 123456
-        
-        **إداري:**  
-        - اسم المستخدم: admin1  
-        - كلمة المرور: 123456
-        """)
+    # تهيئة العملاء
+    supabase_client = init_supabase()
+    openai_client = init_openai()
+    
+    return supabase_client, openai_client
 
 # ===============================
-# القائمة الجانبية المشتركة
+# تحديث الدوال التي تستخدم الذكاء الاصطناعي
 # ===============================
-def sidebar_menu():
-    with st.sidebar:
-        st.title(f"👋 مرحباً، {st.session_state.username}")
-        st.markdown(f"**الدور:** {st.session_state.role}")
-        st.divider()
+def safe_ai_call(func):
+    """مُغلف للتعامل الآمن مع استدعاءات OpenAI"""
+    def wrapper(*args, **kwargs):
+        if not ai_client:
+            st.warning("⏸️ خدمة الذكاء الاصطناعي غير متاحة حالياً")
+            return "الخدمة غير متوفرة. يرجى التحقق من إعدادات OpenAI API Key."
         
-        # القائمة حسب الدور
-        if st.session_state.role == "طالب":
-            menu_options = [
-                "🏠 الرئيسية",
-                "📚 الدروس",
-                "🧠 التمارين الذكية",
-                "📊 تقدمي",
-                "🤖 المساعد التعليمي"
-            ]
-        elif st.session_state.role == "أستاذ":
-            menu_options = [
-                "🏠 الرئيسية",
-                "📤 رفع الدروس",
-                "✏️ إنشاء تمارين",
-                "👨‍🎓 متابعة الطلاب",
-                "📊 إحصائيات"
-            ]
-        else:  # إداري
-            menu_options = [
-                "🏠 الرئيسية",
-                "👥 إدارة المستخدمين",
-                "📊 لوحة التحكم",
-                "📈 التقارير",
-                "⚙️ الإعدادات"
-            ]
-        
-        selected = st.radio("القائمة", menu_options, label_visibility="collapsed")
-        st.divider()
-        
-        if st.button("🚪 تسجيل الخروج", use_container_width=True, type="secondary"):
-            log_activity(st.session_state.user_id, "logout")
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
-        
-        return selected
+        try:
+            return func(*args, **kwargs)
+        except AuthenticationError:
+            st.error("🔑 خطأ في مصادقة OpenAI. يرجى التحقق من API Key.")
+            return "حدث خطأ في الخدمة."
+        except Exception as e:
+            st.error(f"خطأ في خدمة الذكاء الاصطناعي: {str(e)}")
+            return f"حدث خطأ: {str(e)}"
+    
+    return wrapper
 
-# ===============================
-# الصفحات الرئيسية حسب الدور
-# ===============================
-def student_dashboard(selected):
-    if selected == "🏠 الرئيسية":
-        st.title("🏠 لوحة الطالب")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("الدروس المكتملة", "12", "+3")
-        with col2:
-            st.metric("التمارين المحلولة", "47", "+8")
-        with col3:
-            st.metric("مستوى التقدم", "75%", "+5%")
-        
-        # اقتراح ذكي
-        st.subheader("🎯 نشاط مقترح لك اليوم")
-        suggestion = suggest_activity(st.session_state.user_id)
-        if suggestion:
-            st.info(f"نقترح عليك: {suggestion}")
-            if st.button("بدء النشاط المقترح"):
-                st.session_state.selected_activity = suggestion
-                st.rerun()
-    
-    elif selected == "📚 الدروس":
-        st.title("📚 مكتبة الدروس")
-        display_lessons()
-    
-    elif selected == "🧠 التمارين الذكية":
-        st.title("🧠 التمارين الذكية")
-        smart_exercises_page()
-    
-    elif selected == "📊 تقدمي":
-        st.title("📊 تتبع تقدمي")
-        progress_page()
-    
-    elif selected == "🤖 المساعد التعليمي":
-        st.title("🤖 المساعد التعليمي")
-        chatbot_page()
+@safe_ai_call
+def generate_exercise_safe(subject, lesson, level):
+    """نسخة آمنة من توليد التمارين"""
+    prompt = f"""
+أنت أستاذ محترف.
+أنشئ تمرينًا تعليميًا حقيقيًا.
 
-def teacher_dashboard(selected):
-    if selected == "🏠 الرئيسية":
-        st.title("👨‍🏫 لوحة الأستاذ")
-        
-        # إحصائيات سريعة
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("عدد الدروس", "24")
-            st.metric("الطلاب النشطين", "15")
-        with col2:
-            st.metric("التمارين المنشأة", "56")
-            st.metric("متوسط التفاعل", "82%")
-        
-        # إجراءات سريعة
-        st.subheader("🛠 إجراءات سريعة")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("📤 رفع درس جديد", use_container_width=True):
-                st.session_state.show_upload = True
-                st.rerun()
-        with col2:
-            if st.button("✏️ إنشاء تمرين", use_container_width=True):
-                st.session_state.create_exercise = True
-                st.rerun()
-        with col3:
-            if st.button("📊 عرض التقارير", use_container_width=True):
-                st.session_state.show_reports = True
-                st.rerun()
-    
-    elif selected == "📤 رفع الدروس" or st.session_state.get('show_upload'):
-        st.title("📤 رفع درس جديد")
-        upload_lesson_page()
-    
-    elif selected == "✏️ إنشاء تمارين" or st.session_state.get('create_exercise'):
-        st.title("✏️ إنشاء تمارين ذكية")
-        create_exercise_page()
-    
-    elif selected == "👨‍🎓 متابعة الطلاب":
-        st.title("👨‍🎓 متابعة أداء الطلاب")
-        monitor_students_page()
-    
-    elif selected == "📊 إحصائيات":
-        st.title("📊 الإحصائيات التفصيلية")
-        statistics_page()
+الطور: {level}
+المادة: {subject}
+الدرس: {lesson}
 
-def admin_dashboard(selected):
-    if selected == "🏠 الرئيسية":
-        st.title("👨‍💼 لوحة الإدارة")
-        
-        # نظرة عامة
-        st.subheader("📈 نظرة عامة على النظام")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("إجمالي المستخدمين", "156")
-        with col2:
-            st.metric("الدروس المرفوعة", "89")
-        with col3:
-            st.metric("التفاعلات اليوم", "1,234")
-        
-        # مخطط سريع
-        st.subheader("📊 نشاط النظام")
-        chart_data = pd.DataFrame({
-            'اليوم': ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'],
-            'التفاعلات': [345, 456, 567, 432, 543]
-        })
-        st.bar_chart(chart_data.set_index('اليوم'))
-    
-    elif selected == "👥 إدارة المستخدمين":
-        st.title("👥 إدارة المستخدمين")
-        manage_users_page()
-    
-    elif selected == "📊 لوحة التحكم":
-        st.title("📊 لوحة التحكم الشاملة")
-        control_panel_page()
-    
-    elif selected == "📈 التقارير":
-        st.title("📈 التقارير التفصيلية")
-        reports_page()
-    
-    elif selected == "⚙️ الإعدادات":
-        st.title("⚙️ إعدادات النظام")
-        settings_page()
+المطلوب:
+1️⃣ سؤال مباشر
+2️⃣ تمرين تطبيقي
+3️⃣ حل نموذجي واضح
+"""
+
+    response = ai_client.chat.completions.create(
+        model="gpt-3.5-turbo",  # استخدام نموذج أقل تكلفة للاختبار
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=300,
+        temperature=0.7
+    )
+
+    return response.choices[0].message.content
+
+@safe_ai_call
+def chat_with_ai_safe(messages):
+    """نسخة آمنة من الدردشة مع AI"""
+    response = ai_client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=messages,
+        max_tokens=300,
+        temperature=0.7
+    )
+    return response.choices[0].message.content
 
 # ===============================
-# الدوال المساعدة (يتم نقلها لملفات منفصلة لاحقاً)
+# تحديث صفحة المساعد التعليمي
 # ===============================
-def suggest_activity(user_id):
-    """اقتراح نشاط بناءً على تاريخ الطالب"""
-    try:
-        res = supabase.table("activity_log")\
-            .select("*")\
-            .eq("user_id", user_id)\
-            .execute()
-        
-        if res.data:
-            # هنا يمكن تطوير خوارزمية ذكية
-            suggestions = [
-                "درس الجبر للمبتدئين",
-                "تمارين التفاضل والتكامل",
-                "قراءة نص أدبي",
-                "تجربة علمية بسيطة"
-            ]
-            import random
-            return random.choice(suggestions)
-    except:
-        pass
-    return None
-
-def display_lessons():
-    """عرض الدروس المتاحة"""
-    try:
-        res = supabase.table("lessons")\
-            .select("*")\
-            .execute()
-        
-        if res.data:
-            for lesson in res.data:
-                with st.expander(f"📖 {lesson['title']}"):
-                    st.write(f"**المادة:** {lesson['subject']}")
-                    st.write(f"**المستوى:** {lesson['level']}")
-                    st.write(f"**الوصف:** {lesson.get('description', 'لا يوجد وصف')}")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("📖 ابدأ الدرس", key=f"start_{lesson['id']}"):
-                            st.session_state.current_lesson = lesson
-                            log_activity(st.session_state.user_id, "start_lesson", lesson)
-                    with col2:
-                        if st.button("🧠 تمارين", key=f"ex_{lesson['id']}"):
-                            generate_and_show_exercise(lesson)
-        else:
-            st.info("📭 لا توجد دروس متاحة بعد.")
-    except Exception as e:
-        st.error(f"خطأ في تحميل الدروس: {e}")
-
-def upload_lesson_page():
-    """صفحة رفع الدروس"""
-    with st.form("upload_form"):
-        title = st.text_input("عنوان الدرس")
-        subject = st.selectbox("المادة", ["رياضيات", "علوم", "فيزياء", "كيمياء", "لغة عربية", "لغة إنجليزية"])
-        level = st.selectbox("المستوى", ["ابتدائي", "متوسط", "ثانوي", "جامعي"])
-        description = st.text_area("وصف الدرس")
-        
-        uploaded_file = st.file_uploader("رفع ملف الدرس", type=['pdf', 'txt', 'jpg', 'png', 'pptx', 'docx'])
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            submit = st.form_submit_button("📤 رفع الدرس", type="primary")
-        with col2:
-            ai_generate = st.form_submit_button("🤖 إنشاء محتوى بالذكاء الاصطناعي")
-        
-        if submit and uploaded_file:
-            # هنا يتم رفع الملف لـ Supabase Storage
-            file_path = f"lessons/{uploaded_file.name}"
-            
-            try:
-                # رفع الملف
-                supabase.storage.from_("educational_content")\
-                    .upload(file_path, uploaded_file.getvalue())
-                
-                # حفظ في قاعدة البيانات
-                supabase.table("lessons").insert({
-                    "title": title,
-                    "subject": subject,
-                    "level": level,
-                    "description": description,
-                    "file_path": file_path,
-                    "uploaded_by": st.session_state.user_id
-                }).execute()
-                
-                st.success("✅ تم رفع الدرس بنجاح!")
-                log_activity(st.session_state.user_id, "upload_lesson", {"title": title})
-                
-            except Exception as e:
-                st.error(f"❌ خطأ في رفع الملف: {e}")
-        
-        elif ai_generate:
-            # توليد محتوى بالذكاء الاصطناعي
-            with st.spinner("🤖 جاري إنشاء المحتوى..."):
-                prompt = f"""
-                أنشئ محتوى تعليمي لدرس بعنوان:
-                {title}
-                
-                المادة: {subject}
-                المستوى: {level}
-                
-                المطلوب:
-                1. مقدمة
-                2. أهداف الدرس
-                3. شرح مفصل
-                4. أمثلة توضيحية
-                5. ملخص
-                """
-                
-                response = ai_client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=1000
-                )
-                
-                st.markdown("### المحتوى المنشأ:")
-                st.write(response.choices[0].message.content)
-                st.download_button(
-                    "📥 تحميل المحتوى",
-                    response.choices[0].message.content,
-                    file_name=f"{title}.txt"
-                )
-
-def smart_exercises_page():
-    """صفحة التمارين الذكية"""
-    st.markdown("### 🎯 تمارين مخصصة لمستواك")
-    
-    # تحديد التفضيلات
-    col1, col2 = st.columns(2)
-    with col1:
-        subject = st.selectbox("اختر المادة", ["رياضيات", "علوم", "فيزياء", "لغة عربية"], key="ex_subject")
-        difficulty = st.select_slider("مستوى الصعوبة", ["سهل", "متوسط", "صعب"])
-    with col2:
-        topic = st.text_input("الموضوع (اختياري)")
-        num_questions = st.number_input("عدد الأسئلة", min_value=1, max_value=10, value=3)
-    
-    if st.button("🧠 توليد تمارين ذكية", type="primary"):
-        with st.spinner("🤖 جاري إنشاء تمارين مخصصة لك..."):
-            prompt = f"""
-            أنشئ {num_questions} تمارين تعليمية:
-            
-            المادة: {subject}
-            المستوى: {difficulty}
-            الموضوع: {topic if topic else 'عام'}
-            
-            لكل تمرين:
-            1. السؤال
-            2. الخيارات (إذا كان اختيار من متعدد)
-            3. الحل التفصيلي
-            4. نصائح للطالب
-            """
-            
-            response = ai_client.chat.completions.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=800
-            )
-            
-            st.markdown("### 📝 تمارينك الذكية:")
-            st.write(response.choices[0].message.content)
-            
-            # حفظ التمارين
-            log_activity(st.session_state.user_id, "generate_exercises", {
-                "subject": subject,
-                "difficulty": difficulty,
-                "count": num_questions
-            })
-
 def chatbot_page():
-    """صفحة المساعد التعليمي"""
-    st.markdown("### 🤖 مساعدك التعليمي الذكي")
+    """صفحة المساعد التعليمي مع معالجة الأخطاء"""
+    st.markdown("### 🤖 مساعدك التعليمي الذكاء الاصطناعي")
+    
+    # تحذير إذا لم يكن AI متاحاً
+    if not ai_client:
+        st.warning("""
+        ⚠️ **خدمة الذكاء الاصطناعي غير متاحة حالياً**
+        
+        **لحل هذه المشكلة:**
+        1. تأكد من صحة `OPENAI_API_KEY` في ملف `.env`
+        2. تحقق من رصيد حساب OpenAI
+        3. تأكد من تفعيل API Key
+        
+        **للاختبار بدون OpenAI:**
+        - يمكنك استخدام الميزات الأخرى
+        - التواصل مع الأستاذ مباشرة
+        - استعراض الدروس المتاحة
+        """)
+        
+        # عرض بدائل
+        st.info("💡 **بدائل مؤقتة:**")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📚 استعراض الدروس المتاحة"):
+                st.switch_page("pages/1_👨‍🎓_الطالب.py")
+        with col2:
+            if st.button("🧠 تمارين تجريبية"):
+                st.session_state.show_sample_exercises = True
+        
+        return
     
     # تهيئة محادثة
     if "chat_history" not in st.session_state:
@@ -480,64 +221,31 @@ def chatbot_page():
         # الحصول على الإجابة
         with st.chat_message("assistant"):
             with st.spinner("🤖 جاري التفكير..."):
-                response = ai_client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "أنت مساعد تعليمي ذكي تساعد الطلاب في فهم الدروس وحل التمارين. اشرح المفاهيم بطريقة مبسطة مع أمثلة."},
+                try:
+                    messages = [
+                        {"role": "system", "content": "أنت مساعد تعليمي ذكي."},
                         *[{"role": msg["role"], "content": msg["content"]} 
-                          for msg in st.session_state.chat_history[-6:]]  # آخر 6 رسائل
-                    ],
-                    max_tokens=500
-                )
-                
-                answer = response.choices[0].message.content
-                st.markdown(answer)
-                st.session_state.chat_history.append({"role": "assistant", "content": answer})
-        
-        log_activity(st.session_state.user_id, "chatbot_query", {"query": prompt[:100]})
-
-def progress_page():
-    """صفحة تتبع التقدم"""
-    st.markdown("### 📊 تتبع تقدمك التعليمي")
-    
-    # بيانات نموذجية (يتم استبدالها ببيانات حقيقية)
-    progress_data = {
-        "رياضيات": 85,
-        "علوم": 70,
-        "لغة عربية": 90,
-        "فيزياء": 65
-    }
-    
-    # مخطط التقدم
-    import plotly.graph_objects as go
-    
-    fig = go.Figure(data=[
-        go.Bar(
-            x=list(progress_data.keys()),
-            y=list(progress_data.values()),
-            marker_color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
-        )
-    ])
-    
-    fig.update_layout(
-        title="تقدمك في المواد المختلفة",
-        yaxis_title="النسبة المئوية",
-        height=400
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # إحصائيات إضافية
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("ساعات التعلم", "24.5")
-    with col2:
-        st.metric("التحديات المكتملة", "15")
-    with col3:
-        st.metric("التحسن الشهري", "+12%")
+                          for msg in st.session_state.chat_history[-6:]]
+                    ]
+                    
+                    answer = chat_with_ai_safe(messages)
+                    st.markdown(answer)
+                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                    
+                except Exception as e:
+                    st.error(f"حدث خطأ: {str(e)}")
+                    # إضافة إجابة بديلة
+                    st.markdown("""
+                    **عذراً، واجهت صعوبة في الاتصال بالخدمة.**
+                    
+                    يمكنك:
+                    - إعادة المحاولة لاحقاً
+                    - تصفح الدروس المتاحة
+                    - الاطلاع على الأسئلة الشائعة
+                    """)
 
 # ===============================
-# الدالة الرئيسية للتشغيل
+# تحديث الدالة الرئيسية
 # ===============================
 def main():
     # إعدادات الصفحة
@@ -557,13 +265,31 @@ def main():
     .stMetric {
         text-align: center;
     }
+    .warning-box {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        margin: 1rem 0;
+    }
     </style>
     """, unsafe_allow_html=True)
+    
+    # تهيئة العملاء بشكل عالمي
+    global supabase, ai_client
+    supabase, ai_client = initialize_clients()
     
     # التحقق من تسجيل الدخول
     if not st.session_state.get("logged_in"):
         login_page()
     else:
+        # عرض حالة الاتصال في الشريط الجانبي
+        with st.sidebar:
+            if not ai_client:
+                st.warning("🤖 AI غير متصل")
+            if not supabase:
+                st.warning("🗄️ قاعدة البيانات غير متصلة")
+        
         selected = sidebar_menu()
         
         # توجيه حسب الدور
