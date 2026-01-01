@@ -1,48 +1,45 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
-import openai
+from supabase import create_client, Client
 from collections import Counter
 from openai import OpenAI
-# ---------------------------
+
+# ===============================
 # تحميل المتغيرات السرية
-# ---------------------------
+# ===============================
 load_dotenv()
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
 
-# ---------------------------
-# إنشاء عميل Supabase
-# ---------------------------
+# ===============================
+# إنشاء العملاء
+# ===============================
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ---------------------------
+# ===============================
 # إعداد الصفحة
-# ---------------------------
+# ===============================
 st.set_page_config(
     page_title="منصة تعليمية ذكية",
     page_icon="📘",
     layout="wide"
 )
 
-# ---------------------------
-# تسجيل الدخول
-# ---------------------------
+# ===============================
+# دوال أساسية
+# ===============================
 def authenticate(username, password):
-    data = supabase.table("users").select("*").eq("username", username).execute()
-    if data.data:
-        user = data.data[0]
-        if password == user["password"]:
-            return user["role"]
+    res = supabase.table("users").select("*").eq("username", username).execute()
+    if res.data and res.data[0]["password"] == password:
+        return res.data[0]["role"]
     return None
 
-# ---------------------------
-# تسجيل النشاط
-# ---------------------------
+
 def log_activity(username, level, subject, lesson, activity_type):
     supabase.table("activity_log").insert({
         "username": username,
@@ -52,173 +49,119 @@ def log_activity(username, level, subject, lesson, activity_type):
         "activity_type": activity_type
     }).execute()
 
-# ---------------------------
-# اقتراح ذكي باستخدام Supabase
-# ---------------------------
+
 def suggest_activity(username):
     res = supabase.table("activity_log").select("*").eq("username", username).execute()
-    activities = [(row["level"], row["subject"], row["lesson"]) for row in res.data]
-    if not activities:
+    if not res.data:
         return None
-    most_common = Counter(activities).most_common(1)[0][0]
-    return most_common
+    activities = [(r["level"], r["subject"], r["lesson"]) for r in res.data]
+    return Counter(activities).most_common(1)[0][0]
 
-# ---------------------------
-# اقتراح تمارين بواسطة AI
-# 
-#def generate_exercise(subject, lesson):
-#    prompt = f"اصنع لي تمرين قصير للدرس '{lesson}' في مادة '{subject}' باللغة العربية."
-#    response = openai.ChatCompletion.create(
-#        model="gpt-4",
-#        messages=[{"role": "user", "content": prompt}],
-#       max_tokens=300
-#    )
-#    return response.choices[0].message.content
-# ---------------------------
 
-def generate_exercise(subject, lesson):
+def generate_exercise(subject, lesson, level):
     prompt = f"""
-أنشئ تمرينًا تعليميًا للطالب حول المادة التالية:
+أنت أستاذ محترف.
+أنشئ تمرينًا تعليميًا حقيقيًا.
 
-المادة: {subject}
-الدرس: {lesson}
-
-اجعل التمرين مناسبًا للتعليم الثانوي مع حل مختصر.
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=300
-    )
-
-    return response.choices[0].message.content
-
-
-client = OpenAI(api_key=os.getenv(OPENAI_API_KEY))
-
-# =========================
-# توليد تمرين بالذكاء الاصطناعي
-# =========================
-def generate_exercise(subject, lesson):
-
-    prompt = f"""
-أنشئ تمرينًا تعليميًا مناسبًا للتعليم الثانوي.
-
+الطور: {level}
 المادة: {subject}
 الدرس: {lesson}
 
 المطلوب:
-- سؤال واحد على الأقل
-- تمرين تطبيقي
-- حل مختصر وواضح
+1️⃣ سؤال مباشر
+2️⃣ تمرين تطبيقي
+3️⃣ حل نموذجي واضح
 """
 
-    response = client.chat.completions.create(
+    response = ai_client.chat.completions.create(
         model="gpt-4.1-mini",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=300
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=400
     )
 
     return response.choices[0].message.content
 
 
-exercise = exercise_response.choices[0].message.content
+def explain_lesson(subject, lesson):
+    prompt = f"""
+اشرح درس "{lesson}" في مادة "{subject}"
+بأسلوب بسيط، تدريجي، ومفهوم للطالب.
+"""
 
-# ---------------------------
+    response = ai_client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=500
+    )
+
+    return response.choices[0].message.content
+
+
+# ===============================
 # تهيئة الجلسة
-# ---------------------------
+# ===============================
 if "role" not in st.session_state:
     st.session_state.role = None
     st.session_state.username = None
 
-# ---------------------------
-# صفحة تسجيل الدخول
-# ---------------------------
+# ===============================
+# تسجيل الدخول
+# ===============================
 if not st.session_state.role:
     st.title("🔐 تسجيل الدخول")
-    username = st.text_input("اسم المستخدم")
-    password = st.text_input("كلمة المرور", type="password")
+
+    u = st.text_input("اسم المستخدم")
+    p = st.text_input("كلمة المرور", type="password")
+
     if st.button("دخول"):
-        role = authenticate(username, password)
+        role = authenticate(u, p)
         if role:
             st.session_state.role = role
-            st.session_state.username = username
-            st.success("✅ تم تسجيل الدخول بنجاح")
+            st.session_state.username = u
+            st.success("تم الدخول بنجاح")
             st.rerun()
         else:
-            st.error("❌ بيانات غير صحيحة")
+            st.error("بيانات غير صحيحة")
 
-# ---------------------------
+# ===============================
 # بعد تسجيل الدخول
-# ---------------------------
+# ===============================
 else:
-    st.sidebar.success(f"👤 {st.session_state.username} ({st.session_state.role})")
-    if st.sidebar.button("🚪 تسجيل الخروج"):
-        st.session_state.role = None
-        st.session_state.username = None
+    st.sidebar.success(f"{st.session_state.username} ({st.session_state.role})")
+
+    if st.sidebar.button("تسجيل الخروج"):
+        st.session_state.clear()
         st.rerun()
 
-    # ---------------------------
-    # اختيار النشاط
-    # ---------------------------
-    st.header("📚 اختيار النشاط")
-    level = st.selectbox("الطور", ["ابتدائي", "متوسط", "ثانوي"])
-    subject = st.selectbox("المادة", ["رياضيات", "علوم", "فيزياء", "لغة عربية"])
-    lesson = st.text_input("اسم الحصة")
-    activity_type = st.radio("نوع النشاط", ["شرح", "تمارين", "تطبيق"])
+    page = st.sidebar.radio(
+        "📂 الصفحات",
+        ["📚 النشاط", "🤖 الذكاء الاصطناعي", "📊 الإدارة", "👨‍🏫 الأستاذ"]
+    )
 
-    if st.button("▶️ بدء النشاط"):
-        st.success(f"📘 {activity_type} - {lesson}")
-        log_activity(st.session_state.username, level, subject, lesson, activity_type)
+    # ===============================
+    # صفحة النشاط
+    # ===============================
+    if page == "📚 النشاط":
+        st.header("📚 النشاط التعليمي")
 
-        # اقتراح تمارين فعلية بواسطة AI
-        if activity_type != "شرح":
-            exercise = generate_exercise(subject, lesson)
-            st.markdown(f"### 🤖 التمرين المقترح:\n{exercise}")
+        level = st.selectbox("الطور", ["ابتدائي", "متوسط", "ثانوي"])
+        subject = st.selectbox("المادة", ["رياضيات", "علوم", "فيزياء", "لغة عربية"])
+        lesson = st.text_input("اسم الدرس")
+        activity = st.radio("نوع النشاط", ["شرح", "تمارين", "تطبيق"])
 
-    # ---------------------------
-    # الاقتراح الذكي
-    # ---------------------------
-    st.divider()
-    st.subheader("🤖 اقتراح ذكي")
-    suggestion = suggest_activity(st.session_state.username)
-    if suggestion:
-        st.info(f"📌 نقترح متابعة:\nالطور: {suggestion[0]}\nالمادة: {suggestion[1]}\nالحصة: {suggestion[2]}")
-    else:
-        st.warning("لا توجد بيانات كافية للاقتراح بعد.")
+        if st.button("بدء"):
+            log_activity(st.session_state.username, level, subject, lesson, activity)
 
-    # ---------------------------
-    # لوحة حسب الدور
-    # ---------------------------
-    st.divider()
-    if st.session_state.role == "admin":
-        st.header("🧑‍💼 لوحة الإداري")
-        st.write("📊 إحصائيات المستخدمين والأنشطة")
-        data = supabase.table("activity_log").select("*").execute()
-        df = pd.DataFrame(data.data)
-        st.dataframe(df)
-        st.bar_chart(df.groupby("subject").size())
+            if activity == "شرح":
+                st.markdown(explain_lesson(subject, lesson))
+            else:
+                st.markdown(generate_exercise(subject, lesson, level))
 
-    elif st.session_state.role == "teacher":
-        st.header("👨‍🏫 لوحة الأستاذ")
-        st.write("إضافة تمارين جديدة")
-        new_lesson = st.text_input("درس جديد")
-        file = st.file_uploader("رفع ملف الدرس (PDF/صورة/نص)", type=["pdf", "png", "jpg", "txt"])
-        if st.button("💾 إضافة درس"):
-            if new_lesson and file:
-                file_content = file.read()
-                supabase.storage.from_("lessons").upload(f"{new_lesson}_{file.name}", file_content)
-                st.success("✅ تم إضافة الدرس بنجاح")
+    # ===============================
+    # صفحة الذكاء الاصطناعي
+    # ===============================
+    elif page == "🤖 الذكاء الاصطناعي":
+        st.header("🤖 قدرات الذكاء الاصطناعي")
 
-    elif st.session_state.role == "student":
-        st.header("👨‍🎓 لوحة الطالب")
-        st.write("التعلم والتفاعل مع المحتوى")
-
-
-
-
+        subject = st.selectbox("المادة", ["رياضيات", "علوم", "فيزياء", "لغة عربية"])
+        lesson = st.text_input("الدرس")_
