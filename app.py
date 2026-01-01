@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 import openai
 from collections import Counter
-
+from openai import OpenAI
 # ---------------------------
 # تحميل المتغيرات السرية
 # ---------------------------
@@ -75,9 +75,9 @@ def suggest_activity(username):
 #    )
 #    return response.choices[0].message.content
 # ---------------------------
-from openai import OpenAI
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+client = OpenAI(api_key=os.getenv(OPENAI_API_KEY))
 
 exercise_response = client.chat.completions.create(
     model="gpt-3.5-turbo",
@@ -176,4 +176,5 @@ else:
     elif st.session_state.role == "student":
         st.header("👨‍🎓 لوحة الطالب")
         st.write("التعلم والتفاعل مع المحتوى")
+
 
