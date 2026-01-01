@@ -1,6 +1,0 @@
-streamlit
-supabase
-openai
-python-dotenv
-pandas
-plotly
