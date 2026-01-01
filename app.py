@@ -65,15 +65,27 @@ def suggest_activity(username):
 
 # ---------------------------
 # اقتراح تمارين بواسطة AI
+# 
+#def generate_exercise(subject, lesson):
+#    prompt = f"اصنع لي تمرين قصير للدرس '{lesson}' في مادة '{subject}' باللغة العربية."
+#    response = openai.ChatCompletion.create(
+#        model="gpt-4",
+#        messages=[{"role": "user", "content": prompt}],
+#       max_tokens=300
+#    )
+#    return response.choices[0].message.content
 # ---------------------------
-def generate_exercise(subject, lesson):
-    prompt = f"اصنع لي تمرين قصير للدرس '{lesson}' في مادة '{subject}' باللغة العربية."
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=300
-    )
-    return response.choices[0].message.content
+from openai import OpenAI
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+exercise_response = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[{"role": "user", "content": prompt}],
+    max_tokens=300
+)
+
+exercise = exercise_response.choices[0].message.content
 
 # ---------------------------
 # تهيئة الجلسة
@@ -164,3 +176,4 @@ else:
     elif st.session_state.role == "student":
         st.header("👨‍🎓 لوحة الطالب")
         st.write("التعلم والتفاعل مع المحتوى")
+
