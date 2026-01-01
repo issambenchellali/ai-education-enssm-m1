@@ -17,7 +17,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     st.error("❌ مفتاح OpenAI غير مضبوط")
     st.stop()
-
+st.write("OPENAI_API_KEY loaded:", bool(OPENAI_API_KEY))
 # ===============================
 # إنشاء العملاء
 # ===============================
@@ -168,5 +168,6 @@ else:
 
         subject = st.selectbox("المادة", ["رياضيات", "علوم", "فيزياء", "لغة عربية"])
         lesson = st.text_input("الدرس")
+
 
 
