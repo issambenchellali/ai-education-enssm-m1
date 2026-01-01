@@ -6,3 +6,5 @@ pandas>=2.0.0
 plotly>=5.17.0
 requests>=2.31.0
 python-multipart>=0.0.6
+tenacity>=8.2.0  # لإعادة المحاولة التلقائية
+backoff>=2.2.0   # لإدارة أخطاء الاتصال
