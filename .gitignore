@@ -19,3 +19,7 @@ env/
 .idea/
 *.swp
 *.swo
+
+# System
+.DS_Store
+Thumbs.db
