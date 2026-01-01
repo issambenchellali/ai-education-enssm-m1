@@ -76,6 +76,26 @@ def suggest_activity(username):
 #    return response.choices[0].message.content
 # ---------------------------
 
+def generate_exercise(subject, lesson):
+    prompt = f"""
+أنشئ تمرينًا تعليميًا للطالب حول المادة التالية:
+
+المادة: {subject}
+الدرس: {lesson}
+
+اجعل التمرين مناسبًا للتعليم الثانوي مع حل مختصر.
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=300
+    )
+
+    return response.choices[0].message.content
+
 
 client = OpenAI(api_key=os.getenv(OPENAI_API_KEY))
 
@@ -176,5 +196,6 @@ else:
     elif st.session_state.role == "student":
         st.header("👨‍🎓 لوحة الطالب")
         st.write("التعلم والتفاعل مع المحتوى")
+
 
 
